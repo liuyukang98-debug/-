@@ -1,0 +1,419 @@
+concurrency: name: Build Crosshair APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Install Gradle
+        run: |
+          curl -L https://services.gradle.org/distributions/gradle-8.7-bin.zip -o gradle.zip
+          unzip -q gradle.zip
+          echo "$GITHUB_WORKSPACE/gradle-8.7/bin" >> "$GITHUB_PATH"
+
+      - name: Create Android project
+        shell: bash
+        run: |
+          mkdir -p app/src/main/java/com/example/crosshair
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "Crosshair"
+          include(":app")
+          EOF
+
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.6.1' apply false
+              id 'org.jetbrains.kotlin.android' version '2.0.20' apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2048m
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+
+          android {
+              namespace 'com.example.crosshair'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'com.example.crosshair'
+                  minSdk 23
+                  targetSdk 32
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+
+              <application
+                  android:allowBackup="false"
+                  android:label="悬浮准星"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".OverlayService"
+                      android:exported="false"/>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/example/crosshair/MainActivity.kt <<'EOF'
+          package com.example.crosshair
+
+          import android.app.Activity
+          import android.content.Intent
+          import android.net.Uri
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.view.Gravity
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.SeekBar
+          import android.widget.TextView
+          import android.widget.Toast
+
+          class MainActivity : Activity() {
+
+              private fun sendService(action: String, y: Int? = null) {
+                  val intent = Intent(this, OverlayService::class.java)
+                  intent.action = action
+                  if (y != null) intent.putExtra("position_y", y)
+
+                  if (android.os.Build.VERSION.SDK_INT >= 26) {
+                      startForegroundService(intent)
+                  } else {
+                      startService(intent)
+                  }
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  val layout = LinearLayout(this)
+                  layout.orientation = LinearLayout.VERTICAL
+                  layout.gravity = Gravity.CENTER_HORIZONTAL
+                  layout.setPadding(28, 36, 28, 24)
+
+                  val title = TextView(this)
+                  title.text = "悬浮准星"
+                  title.textSize = 28f
+                  layout.addView(title)
+
+                  val description = TextView(this)
+                  description.text = "青色水平参考线 · 中心十字准星"
+                  description.textSize = 16f
+                  layout.addView(description)
+
+                  fun addButton(label: String, action: () -> Unit) {
+                      val button = Button(this)
+                      button.text = label
+                      button.setOnClickListener { action() }
+                      layout.addView(button)
+                  }
+
+                  addButton("1. 开启悬浮窗权限") {
+                      if (!Settings.canDrawOverlays(this)) {
+                          val intent = Intent(
+                              Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                              Uri.parse("package:$packageName")
+                          )
+                          startActivity(intent)
+                      } else {
+                          Toast.makeText(this, "悬浮窗权限已开启", Toast.LENGTH_SHORT).show()
+                      }
+                  }
+
+                  addButton("2. 显示准星") {
+                      if (Settings.canDrawOverlays(this)) {
+                          sendService("SHOW")
+                      } else {
+                          Toast.makeText(this, "请先开启悬浮窗权限", Toast.LENGTH_SHORT).show()
+                      }
+                  }
+
+                  addButton("关闭准星") {
+                      sendService("HIDE")
+                  }
+
+                  val positionLabel = TextView(this)
+                  positionLabel.text = "参考线高度：400"
+                  positionLabel.textSize = 16f
+                  layout.addView(positionLabel)
+
+                  val seekBar = SeekBar(this)
+                  seekBar.max = 1600
+                  seekBar.progress = 400
+                  layout.addView(seekBar)
+
+                  seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                      override fun onProgressChanged(
+                          bar: SeekBar?,
+                          progress: Int,
+                          fromUser: Boolean
+                      ) {
+                          positionLabel.text = "参考线高度：$progress"
+                          if (fromUser && Settings.canDrawOverlays(this@MainActivity)) {
+                              sendService("POSITION", progress)
+                          }
+                      }
+
+                      override fun onStartTrackingTouch(bar: SeekBar?) {}
+                      override fun onStopTrackingTouch(bar: SeekBar?) {}
+                  })
+
+                  val note = TextView(this)
+                  note.text = "调整高度时，准星会跟随移动。悬浮层设置为触摸穿透，不接管游戏触控。"
+                  note.textSize = 14f
+                  layout.addView(note)
+
+                  setContentView(layout)
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/example/crosshair/OverlayService.kt <<'EOF'
+          package com.example.crosshair
+
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.Service
+          import android.content.Intent
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.Paint
+          import android.graphics.PixelFormat
+          import android.os.Build
+          import android.os.IBinder
+          import android.view.Gravity
+          import android.view.View
+          import android.view.WindowManager
+
+          class OverlayService : Service() {
+
+              private lateinit var windowManager: WindowManager
+              private var crosshairView: CrosshairView? = null
+              private var layoutParams: WindowManager.LayoutParams? = null
+
+              override fun onBind(intent: Intent?): IBinder? = null
+
+              override fun onStartCommand(
+                  intent: Intent?,
+                  flags: Int,
+                  startId: Int
+              ): Int {
+                  when (intent?.action) {
+                      "HIDE" -> {
+                          removeCrosshair()
+                          stopForeground(true)
+                          stopSelf()
+                          return START_NOT_STICKY
+                      }
+
+                      "POSITION" -> {
+                          val newY = intent.getIntExtra("position_y", 400)
+                          layoutParams?.let {
+                              it.y = newY
+                              crosshairView?.let { view ->
+                                  windowManager.updateViewLayout(view, it)
+                              }
+                          }
+                          return START_NOT_STICKY
+                      }
+
+                      "SHOW" -> {
+                          createNotification()
+                          if (crosshairView == null) showCrosshair()
+                      }
+                  }
+
+                  return START_NOT_STICKY
+              }
+
+              private fun createNotification() {
+                  val channelId = "crosshair_channel"
+                  val manager = getSystemService(NotificationManager::class.java)
+
+                  if (Build.VERSION.SDK_INT >= 26) {
+                      manager.createNotificationChannel(
+                          NotificationChannel(
+                              channelId,
+                              "悬浮准星",
+                              NotificationManager.IMPORTANCE_LOW
+                          )
+                      )
+                  }
+
+                  val builder = if (Build.VERSION.SDK_INT >= 26) {
+                      Notification.Builder(this, channelId)
+                  } else {
+                      Notification.Builder(this)
+                  }
+
+                  val notification = builder
+                      .setContentTitle("悬浮准星运行中")
+                      .setContentText("返回应用可以关闭准星")
+                      .setSmallIcon(android.R.drawable.ic_menu_view)
+                      .build()
+
+                  startForeground(1, notification)
+              }
+
+              private fun showCrosshair() {
+                  windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+
+                  val windowType =
+                      if (Build.VERSION.SDK_INT >= 26) {
+                          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                      } else {
+                          WindowManager.LayoutParams.TYPE_PHONE
+                      }
+
+                  val params = WindowManager.LayoutParams(
+                      WindowManager.LayoutParams.MATCH_PARENT,
+                      80,
+                      windowType,
+                      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                          WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                          WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                      PixelFormat.TRANSLUCENT
+                  )
+
+                  params.gravity = Gravity.TOP or Gravity.START
+                  params.y = 400
+
+                  val view = CrosshairView()
+                  layoutParams = params
+                  crosshairView = view
+
+                  try {
+                      windowManager.addView(view, params)
+                  } catch (e: Exception) {
+                      removeCrosshair()
+                      stopForeground(true)
+                      stopSelf()
+                  }
+              }
+
+              private fun removeCrosshair() {
+                  try {
+                      crosshairView?.let { windowManager.removeView(it) }
+                  } catch (_: Exception) {
+                  }
+
+                  crosshairView = null
+                  layoutParams = null
+              }
+
+              override fun onDestroy() {
+                  removeCrosshair()
+                  super.onDestroy()
+              }
+
+              private inner class CrosshairView : View(this@OverlayService) {
+
+                  private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                      color = Color.rgb(39, 232, 227)
+                      strokeWidth = 2f
+                      alpha = 210
+                  }
+
+                  private val crossPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                      color = Color.rgb(39, 232, 227)
+                      strokeWidth = 3f
+                  }
+
+                  private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                      color = Color.WHITE
+                  }
+
+                  override fun onDraw(canvas: Canvas) {
+                      super.onDraw(canvas)
+
+                      val cx = width / 2f
+                      val cy = height / 2f
+
+                      canvas.drawLine(0f, cy, width.toFloat(), cy, linePaint)
+
+                      canvas.drawLine(cx - 16f, cy, cx - 6f, cy, crossPaint)
+                      canvas.drawLine(cx + 6f, cy, cx + 16f, cy, crossPaint)
+                      canvas.drawLine(cx, cy - 16f, cx, cy - 6f, crossPaint)
+                      canvas.drawLine(cx, cy + 6f, cx, cy + 16f, crossPaint)
+
+                      canvas.drawCircle(cx, cy, 2.5f, dotPaint)
+                  }
+              }
+          }
+          EOF
+
+      - name: Build debug APK
+        run: gradle --no-daemon assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: crosshair-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
