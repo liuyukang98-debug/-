@@ -1,0 +1,330 @@
+画绳（cx-16，cy，cx-6，cy，you）
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+用途：actions/mayor-artific@v4
+    steps:
+名称：-listo apk
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Create Android project
+        shell: bash
+        run: |
+          mkdir -p app/src/main/java/com/example/crosshair
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "Crosshair"
+          include(":app")
+p.y = (startOffset + event.rawY - startY)
+
+wm.updateViewLayout(this, p)
+          plugins {
+              id 'com.android.application' version '8.6.1' apply false
+              id 'org.jetbrains.kotlin.android' version '2.0.20' apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2048m
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+
+          android {
+              namespace 'com.example.crosshair'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'com.example.crosshair'
+                  minSdk 23
+                  targetSdk 32
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+info.textSize = 17fval info = TextView(this)
+管理{
+导入 android.*
+
+              <application
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar"
+when（Event.action）{val p=params？：返回 falseoverride fun onTouchEvent（Event:MotionEvent）：Boolean{
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+val permission = Button(this)
+返回真 wm. updateViewLayout（this，p）p. Y=startOffset+event
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".OverlayService"
+                      android:exported="false"/>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/example/crosshair/MainActivity.kt <<'EOF'
+          package com.example.crosshair
+
+          import android.app.Activity
+          import android.content.Intent
+          import android.net.Uri
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.widget.*
+
+          class MainActivity : Activity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  val layout = LinearLayout(this)
+                  layout.orientation = LinearLayout.VERTICAL
+                  layout.setPadding(28, 40, 28, 20)
+
+                  val title = TextView(this)
+                  title.text = "悬浮准星"
+                  title.textSize = 28f
+                  layout.addView(title)
+
+                  val info = TextView(this)
+                  info.text = "青色水平头线 + 中心十字准星"
+                  info.textSize = 17f
+                  layout.addView(info)
+
+                  val permission = Button(this)
+                  permission.text = "开启悬浮窗权限"
+                  permission.setOnClickListener {
+                      if (!Settings.canDrawOverlays(this)) {
+                          startActivity(
+                              Intent(
+                                  Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                  Uri.parse("package:$packageName")
+                              )
+                          )
+                      }
+                  }
+                  layout.addView(permission)
+
+                  val show = Button(this)
+                  show.text = "显示准星"
+                  show.setOnClickListener {
+                      if (Settings.canDrawOverlays(this)) {
+                          startService(
+                              Intent(this, OverlayService::class.java)
+                                  .setAction("SHOW")
+                          )
+                      } else {
+                          Toast.makeText(this, "请先开启悬浮窗权限", Toast.LENGTH_SHORT).show()
+                      }
+                  }
+                  layout.addView(show)
+
+                  val hide = Button(this)
+                  hide.text = "关闭准星"
+                  hide.setOnClickListener {
+                      startService(
+                          Intent(this, OverlayService::class.java)
+                              .setAction("HIDE")
+                      )
+                  }
+                  layout.addView(hide)
+
+                  val note = TextView(this)
+                  note.text = "拖动悬浮线调整高度，点击中心位置锁定或解锁。"
+                  note.textSize = 15f
+                  layout.addView(note)
+
+                  setContentView(layout)
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/example/crosshair/OverlayService.kt <<'EOF'
+          package com.example.crosshair
+
+          import android.app.*
+          import android.content.*
+          import android.graphics.*
+          import android.os.*
+          import android.view.*
+          import android.widget.Toast
+          import kotlin.math.abs
+
+          class OverlayService : Service() {
+              private lateinit var wm: WindowManager
+              private var cross: CrossView? = null
+              private var params: WindowManager.LayoutParams? = null
+
+              override fun onBind(intent: Intent?): IBinder? = null
+
+              override fun onStartCommand(intent: Intent?, flags: Int, id: Int): Int {
+                  if (intent?.action == "HIDE") {
+                      removeCross()
+                      stopSelf()
+                      return START_NOT_STICKY
+                  }
+                  if (cross == null) showCross()
+                  return START_NOT_STICKY
+              }
+
+              private fun showCross() {
+                  wm = getSystemService(WINDOW_SERVICE) as WindowManager
+
+                  val type = if (Build.VERSION.SDK_INT >= 26)
+                      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+覆盖乐趣 onDraw（Canvas:Canvas）{var moved=false
+
+覆盖fun onTouchEvent(Event:MotionEvent)：Boolean{canvas.drawCircle(cx，cy，2.5f，dot)
+                      WindowManager.LayoutParams.MATCH_PARENT,
+                      80,
+                      type,
+val p=params？：返回 false
+                          WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                      PixelFormat.TRANSLUCENT
+                  )
+
+when (event.action) {
+MotionEvent.ACTION_DOWN -> {
+
+startY = event.rawY
+startOffset = p.y
+感动=虚假
+
+返回真
+MotionEvent.ACTION_MOVE -> {
+如果！青春和腹肌
+感动=真实
+                      stopSelf()
+                  }
+              }
+
+p.y = (startOffset + event.rawY - startY)
+wm.updateViewLayout(this, p)
+p. Y=（startOffset+event. rawY-startY）感动=you
+wm.updateViewLayout(this, p)p.y = (startOffset + event.rawY - startY)
+返回真
+名称：-listo apk
+              }
+
+color = Color.rgb(39, 232, 227)
+                  removeCross()
+                  super.onDestroy()
+              }
+
+strokeWidth = 3f
+画绳（cx，cy-16，cx，cy-6，you）
+画线（cx，cy+6，cx，cy+16，you）
+覆盖乐趣 onDraw（Canvas:Canvas）{var moved=falseval type=if(Build.VERSION.SDK_INT>=26)
+startY = event.rawYMotionEvent.ACTION_DOWN -> {
+                  }
+
+startY = event.rawYMotionEvent.ACTION_DOWN -> {
+MotionEvent.ACTION_DOWN -> {
+                  }
+
+applicationId'com.example.Crossair'默认配置{
+如果（锁定）位置已锁定“否则”，
+<category android:name="android.intent.category.LAUNCHER"/><action android:name="android.intent.action.MAIN"/>android:label=“悬浮准星”>
+override fun onTouchEvent(event: MotionEvent): Boolean {
+
+applicationId'com.example.Crossair'默认配置{startY = event.rawYMotionEvent.ACTION_DOWN -> {覆盖乐趣 onDraw（Canvas:Canvas）{var moved=falseval type=if(Build.VERSION.SDK_INT>=26)
+when（Event.action）{val p=params？：返回 falseoverride fun onTouchEvent（Event:MotionEvent）：Boolean{导入 android.*
+p. Y=（startOffset+event. rawY-startY）感动=youval p=params？：返回 falseoverride fun onTouchEvent（Event:MotionEvent）：Boolean{
+
+文本=“you you you you you you you you you you you you you you you you you you you=”（cx-16，cy，cx-6，cy，you）wm.updateViewLayout(this，p)p。Y=startOffset+event
+
+<action android:name="android.intent.action.MAIN"/>android:label=“悬浮准星”>
+<category android:name="android.intent.category.LAUNCHER"/>
+定向=LinearLayout
+                      }
+
+layout.setPadding(28, 40, 28, 20)
+val title = TextView(this)
+text=“悬浮准星”
+title.textSize = 28f
+val info = TextView(this)
+                  }
+
+文本=“you you you you you”
+info.textSize = 17f
+
+阿尔法=210
+private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+color = Color.WHITE
+私有var locked=false
+私有var startY=0f
+color = Color.rgb(39, 232, 227)
+strokeWidth = 3f
+
+画绳（cx，cy-16，cx，cy-6，you）
+画绳（cx，cy-16，cx，cy-6，you）
+canvas.drawCircle(cx, cy, 2.5f, dot)
+FLAG_NOT_FOCUSABLE或val p = WindowManager.LayoutParams(
+color = Color.rgb(39, 232, 227)
+strokeWidth = 3f
+                              }
+画绳（cx，cy-16，cx，cy-6，you）
+                          }
+
+if (cross == null) showCross()
+返回START_NOT_STICKY
+val permission = Button(this)
+override fun onTouchEvent(event: MotionEvent): Boolean {
+private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+p.y = (startOffset + event.rawY - startY)rootProject.name = "Crosshair"
+val p=params？：返回 false
+val p=params？：返回 false
+text=“开启悬浮窗权限”
+文本=“you you you you you”val info = TextView(this)
+info.textSize = 17f
+阿尔法=210
+private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+color = Color.WHITE
+p.y = (startOffset + event.rawY - startY)
+wm.updateViewLayout(this, p)
+p. Y=（startOffset+event. rawY-startY）感动=you{applicationId 'com.example.crosshair'
+
+}返回真
+minSdk 23
+
+targetSdk 32
+p. Y=（startOffset+event. rawY-startY）感动=you
+wm.updateViewLayout(this, p)
+画绳（cx-16，cy，cx-6，cy，you）
+路径:app/build/outputs/apk/debug/app-debug.apkyou:actions/mayor-artific@v4
